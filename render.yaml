@@ -1,0 +1,16 @@
+# Blueprint: https://docs.render.com/blueprint-spec
+# Deploy this repo as a Web Service on Render (Socket.IO + Express API only).
+# Frontend is built and hosted separately on Vercel.
+
+services:
+  - type: web
+    name: mystery-asset-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production

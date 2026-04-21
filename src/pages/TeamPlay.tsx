@@ -28,10 +28,17 @@ export function TeamPlay() {
   }, []);
 
   useEffect(() => {
-    if (state?.phase === "ROUND_PLAY" && state.currentRound) {
+    if (
+      (state?.phase === "ROUND_PLAY" || state?.phase === "AUDIO_ANSWER") &&
+      state.currentRound
+    ) {
       setRoundSync({ at: Date.now(), leftMs: state.currentRound.timeLeftMs });
     }
   }, [state?.phase, state?.currentRound?.index, state?.currentRound?.timeLeftMs]);
+
+  useEffect(() => {
+    setToast(null);
+  }, [state?.phase, state?.currentRound?.index]);
 
   useEffect(() => {
     const sock = getSocket();
@@ -100,10 +107,36 @@ export function TeamPlay() {
   }
 
   const round = state.currentRound;
-  const canGuess = state.phase === "ROUND_PLAY" && round && !round.winnerId && you?.id;
+  const rp = state.roundProgress;
+  const questionLabel = () => {
+    const r = round;
+    const m = r?.metaRoundNumber ?? rp?.metaRoundNumber;
+    const q = r?.questionInMeta ?? rp?.questionInMeta;
+    const t = r?.questionsInMeta ?? rp?.questionsInMeta;
+    if (m != null && q != null && t != null) {
+      return `Round ${m} — Question ${q} / ${t}`;
+    }
+    if (r) return `Question ${r.index + 1} / ${r.totalRounds}`;
+    return "Question";
+  };
+  const youSolvedThisRound = Boolean(
+    you?.id && round?.correctPlayerIds?.includes(you.id),
+  );
+  const canGuess = Boolean(
+    round &&
+      you?.id &&
+      !youSolvedThisRound &&
+      ((state.phase === "ROUND_PLAY" && round.kind === "visual") ||
+        (state.phase === "ROUND_PLAY" && (round.kind === "mcq" || round.kind === "riddle")) ||
+        (state.phase === "AUDIO_ANSWER" && round.kind === "audio" && round.answerWindowActive)),
+  );
 
   const roundPlayMs =
-    state.phase === "ROUND_PLAY" ? Math.max(0, roundSync.leftMs - (now - roundSync.at)) : round?.timeLeftMs ?? 0;
+    state.phase === "ROUND_PLAY" || state.phase === "AUDIO_ANSWER"
+      ? Math.max(0, roundSync.leftMs - (now - roundSync.at))
+      : round?.timeLeftMs ?? 0;
+
+  const pending = state.pendingRoundMeta;
 
   return (
     <div className="shell">
@@ -115,13 +148,39 @@ export function TeamPlay() {
         </Link>
       </div>
 
-      <div className="grid-2">
-        <div className="card">
+      <div
+        className="card"
+        style={
+          state.phase === "META_ROUND_PENDING"
+            ? { textAlign: "center", maxWidth: 480, margin: "2rem auto 0" }
+            : undefined
+        }
+      >
           {state.phase === "LOBBY" ? (
             <>
               <h2 style={{ marginTop: 0 }}>Lobby</h2>
               <p className="lede" style={{ marginBottom: 0 }}>
-                Waiting for the facilitator to start the game…
+                Wait until the facilitator starts the game…
+              </p>
+            </>
+          ) : null}
+
+          {state.phase === "META_ROUND_PENDING" && state.metaRoundIntro ? (
+            <>
+              <h2 style={{ marginTop: 0 }}>{state.metaRoundIntro.title}</h2>
+              <p className="lede" style={{ marginBottom: 0 }}>
+                Wait until the facilitator starts this round…
+              </p>
+            </>
+          ) : null}
+
+          {state.phase === "ROUND_PENDING" && pending ? (
+            <>
+              <h2 style={{ marginTop: 0 }}>
+                Round {pending.metaRoundNumber} — Question {pending.questionInMeta} / {pending.questionsInMeta}
+              </h2>
+              <p className="lede" style={{ marginBottom: 0 }}>
+                Wait until the facilitator starts this question…
               </p>
             </>
           ) : null}
@@ -146,87 +205,163 @@ export function TeamPlay() {
 
           {state.phase === "GAME_END" ? (
             <>
-              <h2 style={{ marginTop: 0 }}>Final scores</h2>
-              <p className="lede">Thanks for playing.</p>
+              <h2 style={{ marginTop: 0 }}>Game over</h2>
+              <p className="lede" style={{ marginBottom: 0 }}>
+                Thanks for playing. The facilitator has the final standings.
+              </p>
             </>
           ) : null}
 
-          {(state.phase === "ROUND_PLAY" || state.phase === "ROUND_REVEAL") && round ? (
+          {(state.phase === "ROUND_PLAY" ||
+            state.phase === "ROUND_REVEAL" ||
+            state.phase === "AUDIO_LISTEN" ||
+            state.phase === "AUDIO_ANSWER") &&
+          round ? (
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "1rem" }}>
-                <h2 style={{ marginTop: 0 }}>
-                  Round {round.index + 1} / {round.totalRounds}
-                </h2>
-                {state.phase === "ROUND_PLAY" ? (
+                <h2 style={{ marginTop: 0 }}>{questionLabel()}</h2>
+                {state.phase === "ROUND_PLAY" || state.phase === "AUDIO_ANSWER" ? (
                   <span className="timer">{formatMs(roundPlayMs)}</span>
-                ) : (
+                ) : state.phase === "ROUND_REVEAL" ? (
                   <span className="pill">Reveal</span>
+                ) : (
+                  <span className="pill">Listen</span>
                 )}
               </div>
 
-              <div className="asset-frame">
-                <img
-                  src={round.image}
-                  alt="Mystery asset"
-                  style={{
-                    filter: state.phase === "ROUND_REVEAL" ? "none" : `blur(${round.blurPx}px)`,
-                    transform: state.phase === "ROUND_REVEAL" ? "scale(1)" : `scale(${100 / round.cropPct})`,
-                    objectPosition: "center",
-                  }}
-                />
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    boxShadow: state.phase === "ROUND_REVEAL" ? "none" : "inset 0 0 0 120px rgba(0,0,0,0.65)",
-                    pointerEvents: "none",
-                  }}
-                />
-              </div>
+              {round.roundPrompt ? <p className="round-prompt">{round.roundPrompt}</p> : null}
 
-              {round.hints.length ? (
-                <ul className="hint-list">
-                  {round.hints.map((h) => (
-                    <li key={h}>Hint: {h}</li>
-                  ))}
-                </ul>
+              {round.kind === "audio" ? (
+                <>
+                  {round.movieQuestion ? (
+                    <p className="lede" style={{ fontWeight: 600, color: "var(--text)", marginBottom: "0.75rem" }}>
+                      {round.movieQuestion}
+                    </p>
+                  ) : null}
+                  {state.phase === "AUDIO_LISTEN" ? (
+                    <p className="lede" style={{ marginBottom: "1rem" }}>
+                      Listen while the facilitator plays the clip from their screen. The answer box opens when they start
+                      the 45-second timer.
+                    </p>
+                  ) : null}
+                </>
+              ) : round.kind === "mcq" ? (
+                <>
+                  {round.questionText ? (
+                    <p className="lede" style={{ fontWeight: 600, color: "var(--text)", marginBottom: "1rem" }}>
+                      {round.questionText}
+                    </p>
+                  ) : null}
+                  {round.options?.length && state.phase === "ROUND_PLAY" ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
+                      {round.options.map((opt, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ justifyContent: "flex-start", textAlign: "left" }}
+                          disabled={!canGuess}
+                          onClick={() => getSocket().emit("submitGuess", { guess: String.fromCharCode(65 + i) })}
+                        >
+                          <strong style={{ marginRight: "0.5rem" }}>{String.fromCharCode(65 + i)}.</strong>
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : round.kind === "riddle" ? (
+                <>
+                  {round.questionText ? (
+                    <p className="lede" style={{ fontWeight: 600, color: "var(--text)", marginBottom: "1rem" }}>
+                      {round.questionText}
+                    </p>
+                  ) : null}
+                </>
               ) : (
-                <p className="lede" style={{ fontSize: "0.95rem" }}>
-                  Hints unlock over time — or solve early for more points.
-                </p>
+                <>
+                  {round.image ? (
+                    <div className="asset-frame">
+                      <img
+                        src={round.image}
+                        alt="Mystery asset"
+                        style={{
+                          filter: state.phase === "ROUND_REVEAL" ? "none" : `blur(${round.blurPx}px)`,
+                        }}
+                      />
+                    </div>
+                  ) : null}
+
+                  {round.hints.length ? (
+                    <ul className="hint-list">
+                      {round.hints.map((h) => (
+                        <li key={h}>Hint: {h}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="lede" style={{ fontSize: "0.95rem" }}>
+                      Hints unlock at the start, then at 15s and 30s. The image stays fully blurred for the first 30s, then
+                      clears slightly in steps. You have 45 seconds — faster correct guesses score higher.
+                    </p>
+                  )}
+                </>
               )}
 
               {state.phase === "ROUND_REVEAL" && round.revealAnswer ? (
-                <div className="toast ok">
-                  Answer: <strong>{round.revealAnswer}</strong>
-                  {round.winnerId ? (
-                    <>
-                      {" "}
-                      — solved by{" "}
-                      <strong>{sortedPlayers.find((p) => p.id === round.winnerId)?.name ?? "another team"}</strong>
-                    </>
-                  ) : null}
-                </div>
+                <>
+                  <div className="toast ok">
+                    Answer: <strong>{round.revealAnswer}</strong>
+                    {round.correctPlayerIds?.length ? (
+                      <>
+                        {" "}
+                        — scored this round:{" "}
+                        <strong>
+                          {round.correctPlayerIds
+                            .map((id) => sortedPlayers.find((p) => p.id === id)?.name ?? id)
+                            .join(", ")}
+                        </strong>
+                      </>
+                    ) : (
+                      <> — no team scored this round.</>
+                    )}
+                  </div>
+                  <p className="lede" style={{ fontSize: "0.9rem", marginBottom: 0, marginTop: "1rem" }}>
+                    Hold tight — the facilitator will move everyone to the next round when ready.
+                  </p>
+                </>
               ) : null}
 
-              {state.phase === "ROUND_PLAY" ? (
+              {(state.phase === "ROUND_PLAY" || state.phase === "AUDIO_ANSWER") &&
+                round.kind !== "mcq" && (
                 <form onSubmit={onSubmitGuess}>
                   <div className="field">
-                    <label htmlFor="guess">Your guess</label>
+                    <label htmlFor="guess">
+                      {round.kind === "audio"
+                        ? "Movie name"
+                        : round.kind === "riddle"
+                          ? "Your answer"
+                          : "Your guess"}
+                    </label>
                     <input
                       id="guess"
                       value={guess}
                       onChange={(e) => setGuess(e.target.value)}
-                      placeholder="What is it?"
+                      placeholder={
+                        round.kind === "audio"
+                          ? "Type the movie title…"
+                          : round.kind === "riddle"
+                            ? "Type the riddle answer…"
+                            : "What is it?"
+                      }
                       autoComplete="off"
                       disabled={!canGuess}
                     />
                   </div>
                   <button className="btn btn-primary" type="submit" style={{ marginTop: "0.75rem" }} disabled={!canGuess}>
-                    Submit guess
+                    Submit
                   </button>
                 </form>
-              ) : null}
+              )}
             </>
           ) : null}
 
@@ -235,26 +370,6 @@ export function TeamPlay() {
               {toast.text}
             </div>
           ) : null}
-        </div>
-
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Leaderboard</h3>
-          <ol className="leaderboard">
-            {sortedPlayers.map((p, i) => (
-              <li key={p.id} className={p.id === you?.id ? "me" : undefined}>
-                <span>
-                  <span style={{ opacity: 0.6, marginRight: "0.35rem" }}>{i + 1}.</span>
-                  {p.name}
-                  {p.id === you?.id ? <span style={{ opacity: 0.55 }}> (you)</span> : null}
-                </span>
-                <span style={{ fontFamily: "var(--mono)" }}>{p.score}</span>
-              </li>
-            ))}
-          </ol>
-          <p className="lede" style={{ fontSize: "0.85rem", marginBottom: 0, marginTop: "1rem" }}>
-            Faster correct guesses score higher. First wrong guess each round costs a point.
-          </p>
-        </div>
       </div>
     </div>
   );

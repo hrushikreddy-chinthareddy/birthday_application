@@ -1,6 +1,7 @@
 import express from "express";
 import http from "http";
 import path from "path";
+import fs from "node:fs";
 import { fileURLToPath } from "url";
 import crypto from "node:crypto";
 import cors from "cors";
@@ -13,17 +14,32 @@ import {
   WRONG_GUESS_PENALTY,
   MAX_ROUND_SCORE,
   SPEED_ROUND_BONUS,
+  getRoundPlayVisuals,
+  AUDIO_ANSWER_DURATION_MS,
+  AUDIO_MOVIE_QUESTION,
+  META_ROUNDS,
+  VISUAL_QUESTION_COUNT,
+  AUDIO_QUESTION_COUNT,
+  getRoundProgress,
+  firstQuestionIndexForMetaIntro,
 } from "./rounds.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, "..");
 const distDir = path.join(rootDir, "dist");
+const distIndex = path.join(distDir, "index.html");
 const isProd = process.env.NODE_ENV === "production";
+/** If dist/ exists (e.g. after `npm run build`), serve the SPA; otherwise API + Socket.IO only (typical on Render when UI is on Vercel). */
+const serveSpa = isProd && fs.existsSync(distIndex);
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 
-if (isProd) {
+app.get("/health", (_req, res) => {
+  res.status(200).json({ ok: true, service: "mystery-asset-pack-api" });
+});
+
+if (serveSpa) {
   app.use(express.static(distDir));
 }
 
@@ -76,6 +92,18 @@ function normalizeGuess(s) {
     .replace(/\s+/g, " ");
 }
 
+/** Map MCQ letter A–D to normalized option text for scoring. */
+function normalizedGuessWithMcqLetter(rawNormalized, round) {
+  if (round.kind !== "mcq" || !round.options?.length) return rawNormalized;
+  if (/^[a-d]$/.test(rawNormalized)) {
+    const i = rawNormalized.charCodeAt(0) - "a".charCodeAt(0);
+    if (i >= 0 && i < round.options.length) {
+      return normalizeGuess(round.options[i]);
+    }
+  }
+  return rawNormalized;
+}
+
 function matchesAnswer(normalized, round) {
   const answerNorm = normalizeGuess(round.answer);
   if (normalized === answerNorm) return true;
@@ -103,16 +131,20 @@ function createEmptyRoom(code, adminSocketId, adminToken, adminDisplayName) {
     socketToPlayer: new Map(),
     phase: "LOBBY",
     roundIndex: -1,
+    /** Which block intro to show (0 = Round 1, 1 = Round 2) when phase is META_ROUND_PENDING */
+    metaRoundIntroIndex: 0,
     roundTimer: null,
     hintTimer: null,
     tickInterval: null,
-    roundWinnerId: null,
-    roundSolvedAt: null,
+    /** @type {Set<string>} teams that already scored this round */
+    roundCorrectPlayerIds: new Set(),
     /** @type {Set<string>} */
     wrongGuessers: new Set(),
     speedRound: null,
     /** @type {NodeJS.Timeout | null} */
     speedTimeout: null,
+    /** @type {number | null} when facilitator starts the answer window (audio rounds) */
+    audioAnswerStartedAt: null,
   };
 }
 
@@ -155,42 +187,173 @@ function clearSpeedRound(room) {
   room.speedRound = null;
 }
 
-function publicStateTeam(room, forSocketId) {
-  const players = [...room.players.values()].sort((a, b) => b.score - a.score);
+function buildAdminPendingRound(room) {
   const round = room.roundIndex >= 0 && room.roundIndex < ROUNDS.length ? ROUNDS[room.roundIndex] : null;
+  if (!round) return null;
+  const kind = round.kind ?? "visual";
+  const prog = getRoundProgress(room.roundIndex);
+  return {
+    kind,
+    index: room.roundIndex,
+    totalRounds: ROUNDS.length,
+    metaRoundNumber: prog?.metaRoundNumber ?? null,
+    questionInMeta: prog?.questionInMeta ?? null,
+    questionsInMeta: prog?.questionsInMeta ?? null,
+    roundPrompt: round.roundPrompt ?? null,
+    questionText: round.questionText ?? null,
+    options: kind === "mcq" ? (round.options ?? []) : null,
+    movieQuestion: round.movieQuestion ?? (kind === "audio" ? AUDIO_MOVIE_QUESTION : null),
+    audioUrl: kind === "audio" ? round.audio : null,
+    image: kind === "visual" ? round.image : null,
+    hints: [],
+    timeLeftMs: 0,
+    answerWindowActive: false,
+    blurPx: 0,
+    cropPct: 100,
+    revealAnswer: null,
+    winnerId: null,
+    correctPlayerIds: [],
+    roundSolvedAt: null,
+  };
+}
 
-  let currentRound = null;
-  if (
-    room.phase !== "LOBBY" &&
-    room.phase !== "GAME_END" &&
-    room.phase !== "SPEED_ROUND" &&
-    round
-  ) {
+function buildCurrentRound(room) {
+  const round = room.roundIndex >= 0 && room.roundIndex < ROUNDS.length ? ROUNDS[room.roundIndex] : null;
+  if (!round) return null;
+  const kind = round.kind ?? "visual";
+
+  if (kind === "audio") {
+    if (
+      room.phase !== "AUDIO_LISTEN" &&
+      room.phase !== "AUDIO_ANSWER" &&
+      room.phase !== "ROUND_REVEAL"
+    ) {
+      return null;
+    }
+    let timeLeftMs = 0;
+    if (room.phase === "AUDIO_ANSWER" && room.audioAnswerStartedAt) {
+      timeLeftMs = Math.max(
+        0,
+        AUDIO_ANSWER_DURATION_MS - (Date.now() - room.audioAnswerStartedAt),
+      );
+    }
+    const prog = getRoundProgress(room.roundIndex);
+    return {
+      kind: "audio",
+      index: room.roundIndex,
+      totalRounds: ROUNDS.length,
+      metaRoundNumber: prog?.metaRoundNumber ?? null,
+      questionInMeta: prog?.questionInMeta ?? null,
+      questionsInMeta: prog?.questionsInMeta ?? null,
+      roundPrompt: round.roundPrompt ?? null,
+      questionText: null,
+      options: null,
+      movieQuestion: round.movieQuestion ?? AUDIO_MOVIE_QUESTION,
+      audioUrl: round.audio,
+      image: null,
+      hints: [],
+      timeLeftMs,
+      answerWindowActive: room.phase === "AUDIO_ANSWER",
+      blurPx: 0,
+      cropPct: 100,
+      revealAnswer: room.phase === "ROUND_REVEAL" ? round.answer : null,
+      winnerId: null,
+      correctPlayerIds: [...room.roundCorrectPlayerIds],
+      roundSolvedAt: null,
+    };
+  }
+
+  if (kind === "visual") {
+    if (room.phase !== "ROUND_PLAY" && room.phase !== "ROUND_REVEAL") return null;
+
     const elapsed = room.roundStartedAt ? Date.now() - room.roundStartedAt : 0;
-    const hintsAvailable = Math.min(MAX_HINTS, Math.floor(elapsed / HINT_INTERVAL_MS));
+    const hintsAvailable = Math.min(MAX_HINTS, 1 + Math.floor(elapsed / HINT_INTERVAL_MS));
     const hints = round.hints.slice(0, hintsAvailable);
 
     const timeLeft = Math.max(0, ROUND_DURATION_MS - elapsed);
-    const blur =
-      room.phase === "ROUND_REVEAL" || room.phase === "SPEED_ROUND"
-        ? 0
-        : Math.max(0, 12 - hintsAvailable * 3);
+    const { blurPx, cropPct } = getRoundPlayVisuals(elapsed, room.phase);
 
-    currentRound = {
+    const prog = getRoundProgress(room.roundIndex);
+    return {
+      kind: "visual",
       index: room.roundIndex,
       totalRounds: ROUNDS.length,
+      metaRoundNumber: prog?.metaRoundNumber ?? null,
+      questionInMeta: prog?.questionInMeta ?? null,
+      questionsInMeta: prog?.questionsInMeta ?? null,
+      roundPrompt: round.roundPrompt ?? null,
+      questionText: null,
+      options: null,
+      movieQuestion: null,
+      audioUrl: null,
       image: round.image,
       hints,
       timeLeftMs: room.phase === "ROUND_PLAY" ? timeLeft : 0,
-      blurPx: blur,
-      cropPct:
-        room.phase === "ROUND_REVEAL" || room.phase === "SPEED_ROUND"
-          ? 100
-          : 55 + hintsAvailable * 12,
+      answerWindowActive: true,
+      blurPx,
+      cropPct,
       revealAnswer: room.phase === "ROUND_REVEAL" ? round.answer : null,
-      winnerId: room.roundWinnerId,
-      roundSolvedAt: room.roundSolvedAt,
+      winnerId: null,
+      correctPlayerIds: [...room.roundCorrectPlayerIds],
+      roundSolvedAt: null,
     };
+  }
+
+  if (kind === "mcq" || kind === "riddle") {
+    if (room.phase !== "ROUND_PLAY" && room.phase !== "ROUND_REVEAL") return null;
+    const elapsed = room.roundStartedAt ? Date.now() - room.roundStartedAt : 0;
+    const timeLeft = Math.max(0, ROUND_DURATION_MS - elapsed);
+    const prog = getRoundProgress(room.roundIndex);
+    return {
+      kind,
+      index: room.roundIndex,
+      totalRounds: ROUNDS.length,
+      metaRoundNumber: prog?.metaRoundNumber ?? null,
+      questionInMeta: prog?.questionInMeta ?? null,
+      questionsInMeta: prog?.questionsInMeta ?? null,
+      roundPrompt: round.roundPrompt ?? null,
+      questionText: round.questionText ?? null,
+      options: kind === "mcq" ? (round.options ?? []) : null,
+      movieQuestion: null,
+      audioUrl: null,
+      image: null,
+      hints: [],
+      timeLeftMs: room.phase === "ROUND_PLAY" ? timeLeft : 0,
+      answerWindowActive: true,
+      blurPx: 0,
+      cropPct: 100,
+      revealAnswer: room.phase === "ROUND_REVEAL" ? round.answer : null,
+      winnerId: null,
+      correctPlayerIds: [...room.roundCorrectPlayerIds],
+      roundSolvedAt: null,
+    };
+  }
+
+  return null;
+}
+
+function scrubAudioUrlForTeam(round) {
+  if (!round || round.kind !== "audio") return round;
+  return { ...round, audioUrl: null };
+}
+
+function publicStateTeam(room, forSocketId) {
+  const players = [...room.players.values()].sort((a, b) => b.score - a.score);
+
+  let currentRound = null;
+  let pendingRoundMeta = null;
+  let metaRoundIntro = null;
+  const roundProgress = room.roundIndex >= 0 ? getRoundProgress(room.roundIndex) : null;
+
+  if (room.phase === "META_ROUND_PENDING") {
+    const block = META_ROUNDS[room.metaRoundIntroIndex];
+    if (block) {
+      metaRoundIntro = { number: block.number, title: block.title, description: block.description };
+    }
+  } else if (room.phase === "ROUND_PENDING") {
+    pendingRoundMeta = getRoundProgress(room.roundIndex);
+  } else if (room.phase !== "LOBBY" && room.phase !== "GAME_END" && room.phase !== "SPEED_ROUND") {
+    currentRound = scrubAudioUrlForTeam(buildCurrentRound(room));
   }
 
   let speedRound = null;
@@ -207,6 +370,9 @@ function publicStateTeam(room, forSocketId) {
     roomCode: room.code,
     players,
     currentRound,
+    pendingRoundMeta,
+    metaRoundIntro: metaRoundIntro ?? null,
+    roundProgress,
     speedRound,
     you: {
       id: getPlayerId(room, forSocketId) ?? "",
@@ -217,40 +383,20 @@ function publicStateTeam(room, forSocketId) {
 
 function publicStateAdmin(room) {
   const players = [...room.players.values()].sort((a, b) => b.score - a.score);
-  const round = room.roundIndex >= 0 && room.roundIndex < ROUNDS.length ? ROUNDS[room.roundIndex] : null;
 
   let currentRound = null;
-  if (
-    room.phase !== "LOBBY" &&
-    room.phase !== "GAME_END" &&
-    room.phase !== "SPEED_ROUND" &&
-    round
-  ) {
-    const elapsed = room.roundStartedAt ? Date.now() - room.roundStartedAt : 0;
-    const hintsAvailable = Math.min(MAX_HINTS, Math.floor(elapsed / HINT_INTERVAL_MS));
-    const hints = round.hints.slice(0, hintsAvailable);
+  let metaRoundIntro = null;
+  const roundProgress = room.roundIndex >= 0 ? getRoundProgress(room.roundIndex) : null;
 
-    const timeLeft = Math.max(0, ROUND_DURATION_MS - elapsed);
-    const blur =
-      room.phase === "ROUND_REVEAL" || room.phase === "SPEED_ROUND"
-        ? 0
-        : Math.max(0, 12 - hintsAvailable * 3);
-
-    currentRound = {
-      index: room.roundIndex,
-      totalRounds: ROUNDS.length,
-      image: round.image,
-      hints,
-      timeLeftMs: room.phase === "ROUND_PLAY" ? timeLeft : 0,
-      blurPx: blur,
-      cropPct:
-        room.phase === "ROUND_REVEAL" || room.phase === "SPEED_ROUND"
-          ? 100
-          : 55 + hintsAvailable * 12,
-      revealAnswer: room.phase === "ROUND_REVEAL" ? round.answer : null,
-      winnerId: room.roundWinnerId,
-      roundSolvedAt: room.roundSolvedAt,
-    };
+  if (room.phase === "META_ROUND_PENDING") {
+    const block = META_ROUNDS[room.metaRoundIntroIndex];
+    metaRoundIntro = block
+      ? { number: block.number, title: block.title, description: block.description }
+      : null;
+  } else if (room.phase === "ROUND_PENDING") {
+    currentRound = buildAdminPendingRound(room);
+  } else if (room.phase !== "LOBBY" && room.phase !== "GAME_END" && room.phase !== "SPEED_ROUND") {
+    currentRound = buildCurrentRound(room);
   }
 
   let speedRound = null;
@@ -267,6 +413,9 @@ function publicStateAdmin(room) {
     roomCode: room.code,
     players,
     currentRound,
+    pendingRoundMeta: null,
+    metaRoundIntro: metaRoundIntro ?? null,
+    roundProgress,
     speedRound,
     you: { id: "", isAdmin: true },
   };
@@ -285,12 +434,21 @@ function broadcastPublicState(room) {
 
 function startRound(room, index) {
   clearRoundTimers(room);
-  room.phase = "ROUND_PLAY";
   room.roundIndex = index;
-  room.roundStartedAt = Date.now();
-  room.roundWinnerId = null;
-  room.roundSolvedAt = null;
+  room.roundCorrectPlayerIds = new Set();
   room.wrongGuessers = new Set();
+  room.audioAnswerStartedAt = null;
+
+  const round = ROUNDS[index];
+  if (round?.kind === "audio") {
+    room.phase = "AUDIO_LISTEN";
+    room.roundStartedAt = null;
+    broadcastPublicState(room);
+    return;
+  }
+
+  room.phase = "ROUND_PLAY";
+  room.roundStartedAt = Date.now();
 
   room.roundTimer = setTimeout(() => endRound(room, "time"), ROUND_DURATION_MS);
 
@@ -310,14 +468,6 @@ function endRound(room, reason) {
   clearRoundTimers(room);
   room.phase = "ROUND_REVEAL";
   broadcastPublicState(room);
-
-  setTimeout(() => {
-    if (room.roundIndex >= ROUNDS.length - 1) {
-      finishGame(room);
-    } else {
-      startRound(room, room.roundIndex + 1);
-    }
-  }, 5000);
 }
 
 function finishGame(room) {
@@ -348,8 +498,8 @@ function finishGame(room) {
   }
 }
 
-function awardRoundPoints(room, playerId, elapsedMs) {
-  const ratio = Math.max(0, 1 - elapsedMs / ROUND_DURATION_MS);
+function awardTimedRoundPoints(room, playerId, elapsedMs, durationMs) {
+  const ratio = Math.max(0, 1 - elapsedMs / durationMs);
   const points = Math.round(MAX_ROUND_SCORE * ratio);
   const p = room.players.get(playerId);
   if (p) p.score += Math.max(10, points);
@@ -436,7 +586,64 @@ io.on("connection", (socket) => {
     if (!room || !isAdminSocket(room, socket.id)) return;
     if (room.players.size < 1) return;
     if (room.phase !== "LOBBY") return;
-    startRound(room, 0);
+    clearRoundTimers(room);
+    room.metaRoundIntroIndex = 0;
+    room.roundIndex = -1;
+    room.roundCorrectPlayerIds = new Set();
+    room.wrongGuessers = new Set();
+    room.audioAnswerStartedAt = null;
+    room.roundStartedAt = null;
+    room.phase = "META_ROUND_PENDING";
+    broadcastPublicState(room);
+  });
+
+  socket.on("adminBeginRound", () => {
+    const room = getRoomForSocket(socket);
+    if (!room || !isAdminSocket(room, socket.id)) return;
+    if (room.phase === "META_ROUND_PENDING") {
+      room.roundIndex = firstQuestionIndexForMetaIntro(room.metaRoundIntroIndex);
+      room.phase = "ROUND_PENDING";
+      broadcastPublicState(room);
+      return;
+    }
+    if (room.phase !== "ROUND_PENDING") return;
+    startRound(room, room.roundIndex);
+  });
+
+  socket.on("adminContinueAfterReveal", () => {
+    const room = getRoomForSocket(socket);
+    if (!room || !isAdminSocket(room, socket.id)) return;
+    if (room.phase !== "ROUND_REVEAL") return;
+    clearRoundTimers(room);
+    if (room.roundIndex >= ROUNDS.length - 1) {
+      finishGame(room);
+    } else if (room.roundIndex === VISUAL_QUESTION_COUNT - 1) {
+      room.metaRoundIntroIndex = 1;
+      room.roundIndex = -1;
+      room.roundCorrectPlayerIds = new Set();
+      room.wrongGuessers = new Set();
+      room.audioAnswerStartedAt = null;
+      room.roundStartedAt = null;
+      room.phase = "META_ROUND_PENDING";
+      broadcastPublicState(room);
+    } else if (room.roundIndex === VISUAL_QUESTION_COUNT + AUDIO_QUESTION_COUNT - 1) {
+      room.metaRoundIntroIndex = 2;
+      room.roundIndex = -1;
+      room.roundCorrectPlayerIds = new Set();
+      room.wrongGuessers = new Set();
+      room.audioAnswerStartedAt = null;
+      room.roundStartedAt = null;
+      room.phase = "META_ROUND_PENDING";
+      broadcastPublicState(room);
+    } else {
+      room.roundIndex += 1;
+      room.roundCorrectPlayerIds = new Set();
+      room.wrongGuessers = new Set();
+      room.audioAnswerStartedAt = null;
+      room.roundStartedAt = null;
+      room.phase = "ROUND_PENDING";
+      broadcastPublicState(room);
+    }
   });
 
   socket.on("submitGuess", ({ guess }) => {
@@ -444,30 +651,38 @@ io.on("connection", (socket) => {
     if (!room) return;
     const text = String(guess || "");
     const playerId = getPlayerId(room, socket.id);
-    if (!playerId || room.phase !== "ROUND_PLAY") return;
-
     const round = ROUNDS[room.roundIndex];
-    if (!round) return;
+    if (!playerId || !round) return;
 
-    if (room.roundWinnerId) {
-      socket.emit("guessResult", { ok: false, message: "Someone already solved this round!" });
-      return;
-    }
+    const isAudio = round.kind === "audio";
+    const isMcqOrRiddle =
+      round.kind === "mcq" || round.kind === "riddle";
+    const canVisual = room.phase === "ROUND_PLAY" && round.kind === "visual";
+    const canMcqRiddle = room.phase === "ROUND_PLAY" && isMcqOrRiddle;
+    const canAudio = room.phase === "AUDIO_ANSWER" && isAudio && room.audioAnswerStartedAt;
+    if (!canVisual && !canAudio && !canMcqRiddle) return;
 
-    const normalized = normalizeGuess(text);
-    if (normalized.length < 2) {
+    let normalized = normalizeGuess(text);
+    normalized = normalizedGuessWithMcqLetter(normalized, round);
+    const minLen = round.kind === "mcq" ? 1 : 2;
+    if (normalized.length < minLen) {
       socket.emit("guessResult", { ok: false, message: "Guess a bit longer." });
       return;
     }
 
     if (matchesAnswer(normalized, round)) {
-      const elapsed = Date.now() - room.roundStartedAt;
-      room.roundWinnerId = playerId;
-      room.roundSolvedAt = Date.now();
-      awardRoundPoints(room, playerId, elapsed);
+      if (room.roundCorrectPlayerIds.has(playerId)) {
+        socket.emit("guessResult", { ok: false, message: "You already got this one right!" });
+        return;
+      }
+      const elapsed = canAudio
+        ? Date.now() - room.audioAnswerStartedAt
+        : Date.now() - room.roundStartedAt;
+      const duration =
+        canAudio ? AUDIO_ANSWER_DURATION_MS : ROUND_DURATION_MS;
+      room.roundCorrectPlayerIds.add(playerId);
+      awardTimedRoundPoints(room, playerId, elapsed, duration);
       broadcastPublicState(room);
-      clearRoundTimers(room);
-      setTimeout(() => endRound(room, "solved"), 3500);
       socket.emit("guessResult", { ok: true, message: "Correct!" });
       return;
     }
@@ -479,6 +694,37 @@ io.on("connection", (socket) => {
     }
     broadcastPublicState(room);
     socket.emit("guessResult", { ok: false, message: "Not quite — try again!" });
+  });
+
+  socket.on("startAudioAnswerTimer", () => {
+    const room = getRoomForSocket(socket);
+    if (!room || !isAdminSocket(room, socket.id)) return;
+    if (room.phase !== "AUDIO_LISTEN") return;
+    const round = ROUNDS[room.roundIndex];
+    if (!round || round.kind !== "audio") return;
+    if (room.audioAnswerStartedAt != null) return;
+
+    room.phase = "AUDIO_ANSWER";
+    room.audioAnswerStartedAt = Date.now();
+
+    room.roundTimer = setTimeout(() => endRound(room, "time"), AUDIO_ANSWER_DURATION_MS);
+    room.tickInterval = setInterval(() => {
+      if (room.phase !== "AUDIO_ANSWER") {
+        clearInterval(room.tickInterval);
+        room.tickInterval = null;
+        return;
+      }
+      broadcastPublicState(room);
+    }, 1500);
+    broadcastPublicState(room);
+  });
+
+  socket.on("replayAudio", () => {
+    const room = getRoomForSocket(socket);
+    if (!room || !isAdminSocket(room, socket.id)) return;
+    const round = ROUNDS[room.roundIndex];
+    if (!round || round.kind !== "audio") return;
+    io.to(room.code).emit("audioReplay", { roundIndex: room.roundIndex, t: Date.now() });
   });
 
   socket.on("speedTap", () => {
@@ -534,9 +780,9 @@ io.on("connection", (socket) => {
   });
 });
 
-if (isProd) {
+if (serveSpa) {
   app.get("*", (_req, res) => {
-    res.sendFile(path.join(distDir, "index.html"));
+    res.sendFile(distIndex);
   });
 }
 
