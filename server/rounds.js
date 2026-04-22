@@ -162,7 +162,7 @@ const AUDIO_ROUNDS = [
 
 /** Round 3: GK and riddles alternate. GK = 7s MCQ; text riddles = 30s; one “keys” riddle is MCQ (30s). */
 export const FINAL_GK_MCQ_DURATION_MS = 7_000;
-export const FINAL_RIDDLE_DURATION_MS = 30_000;
+export const FINAL_RIDDLE_DURATION_MS = 20_000;
 
 const FINAL_ROUNDS = [
   {
