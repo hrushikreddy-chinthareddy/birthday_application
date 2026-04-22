@@ -11,7 +11,6 @@ import {
   ROUND_DURATION_MS,
   HINT_INTERVAL_MS,
   MAX_HINTS,
-  WRONG_GUESS_PENALTY,
   MAX_ROUND_SCORE,
   SPEED_ROUND_BONUS,
   getRoundPlayVisuals,
@@ -134,8 +133,6 @@ function createEmptyRoom(code, adminSocketId, adminToken, adminDisplayName) {
     tickInterval: null,
     /** @type {Set<string>} teams that already scored this round */
     roundCorrectPlayerIds: new Set(),
-    /** @type {Set<string>} */
-    wrongGuessers: new Set(),
     speedRound: null,
     /** @type {NodeJS.Timeout | null} */
     speedTimeout: null,
@@ -433,7 +430,6 @@ function startRound(room, index) {
   clearRoundTimers(room);
   room.roundIndex = index;
   room.roundCorrectPlayerIds = new Set();
-  room.wrongGuessers = new Set();
   room.audioAnswerStartedAt = null;
 
   const round = ROUNDS[index];
@@ -588,7 +584,6 @@ io.on("connection", (socket) => {
     room.metaRoundIntroIndex = 0;
     room.roundIndex = -1;
     room.roundCorrectPlayerIds = new Set();
-    room.wrongGuessers = new Set();
     room.audioAnswerStartedAt = null;
     room.roundStartedAt = null;
     room.phase = "META_ROUND_PENDING";
@@ -619,7 +614,6 @@ io.on("connection", (socket) => {
       room.metaRoundIntroIndex = 1;
       room.roundIndex = -1;
       room.roundCorrectPlayerIds = new Set();
-      room.wrongGuessers = new Set();
       room.audioAnswerStartedAt = null;
       room.roundStartedAt = null;
       room.phase = "META_ROUND_PENDING";
@@ -628,7 +622,6 @@ io.on("connection", (socket) => {
       room.metaRoundIntroIndex = 2;
       room.roundIndex = -1;
       room.roundCorrectPlayerIds = new Set();
-      room.wrongGuessers = new Set();
       room.audioAnswerStartedAt = null;
       room.roundStartedAt = null;
       room.phase = "META_ROUND_PENDING";
@@ -636,7 +629,6 @@ io.on("connection", (socket) => {
     } else {
       room.roundIndex += 1;
       room.roundCorrectPlayerIds = new Set();
-      room.wrongGuessers = new Set();
       room.audioAnswerStartedAt = null;
       room.roundStartedAt = null;
       room.phase = "ROUND_PENDING";
@@ -684,11 +676,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (!room.wrongGuessers.has(playerId)) {
-      room.wrongGuessers.add(playerId);
-      const p = room.players.get(playerId);
-      if (p) p.score = Math.max(0, p.score - WRONG_GUESS_PENALTY);
-    }
     broadcastPublicState(room);
     socket.emit("guessResult", { ok: false, message: "Not quite — try again!" });
   });

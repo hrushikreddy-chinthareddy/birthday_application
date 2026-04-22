@@ -338,7 +338,6 @@ export const ROUND_DURATION_MS = 45_000;
 /** Seconds between hint unlocks: 0s, 15s, 30s elapsed (3 hints). */
 export const HINT_INTERVAL_MS = 15_000;
 export const MAX_HINTS = 3;
-export const WRONG_GUESS_PENALTY = 1;
 export const MAX_ROUND_SCORE = 100;
 export const SPEED_ROUND_BONUS = 25;
 
