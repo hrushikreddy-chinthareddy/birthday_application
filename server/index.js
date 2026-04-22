@@ -22,6 +22,7 @@ import {
   AUDIO_QUESTION_COUNT,
   getRoundProgress,
   firstQuestionIndexForMetaIntro,
+  getRoundPlayDurationMs,
 } from "./rounds.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -72,15 +73,10 @@ function newAdminToken() {
 function normalizeRoomCode(raw) {
   const code = String(raw || "")
     .toUpperCase()
-    .replace(/\s/g, "");
-  const allowed = /^[A-HJ-NP-Z2-9]{4,8}$/;
+    .replace(/[^A-Z0-9]/g, "");
   if (!code.length) return { ok: false, error: "Enter a room code." };
-  if (!allowed.test(code)) {
-    return {
-      ok: false,
-      error: "Use 4–8 characters: A–Z (no I or O) and digits 2–9.",
-    };
-  }
+  if (code.length < 2) return { ok: false, error: "Use at least 2 characters." };
+  if (code.length > 32) return { ok: false, error: "Use at most 32 characters." };
   return { ok: true, code };
 }
 
@@ -302,7 +298,8 @@ function buildCurrentRound(room) {
   if (kind === "mcq" || kind === "riddle") {
     if (room.phase !== "ROUND_PLAY" && room.phase !== "ROUND_REVEAL") return null;
     const elapsed = room.roundStartedAt ? Date.now() - room.roundStartedAt : 0;
-    const timeLeft = Math.max(0, ROUND_DURATION_MS - elapsed);
+    const durationMs = getRoundPlayDurationMs(round);
+    const timeLeft = Math.max(0, durationMs - elapsed);
     const prog = getRoundProgress(room.roundIndex);
     return {
       kind,
@@ -450,7 +447,8 @@ function startRound(room, index) {
   room.phase = "ROUND_PLAY";
   room.roundStartedAt = Date.now();
 
-  room.roundTimer = setTimeout(() => endRound(room, "time"), ROUND_DURATION_MS);
+  const playDuration = getRoundPlayDurationMs(round);
+  room.roundTimer = setTimeout(() => endRound(room, "time"), playDuration);
 
   room.tickInterval = setInterval(() => {
     if (room.phase !== "ROUND_PLAY") {
@@ -678,8 +676,7 @@ io.on("connection", (socket) => {
       const elapsed = canAudio
         ? Date.now() - room.audioAnswerStartedAt
         : Date.now() - room.roundStartedAt;
-      const duration =
-        canAudio ? AUDIO_ANSWER_DURATION_MS : ROUND_DURATION_MS;
+      const duration = getRoundPlayDurationMs(round);
       room.roundCorrectPlayerIds.add(playerId);
       awardTimedRoundPoints(room, playerId, elapsed, duration);
       broadcastPublicState(room);

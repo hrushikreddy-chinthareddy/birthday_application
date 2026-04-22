@@ -6,8 +6,8 @@
 export const AUDIO_MOVIE_QUESTION =
   "Guess the movie from which this dialogue/song is taken from?";
 
-/** Answer window after the facilitator starts the timer (same scoring curve as picture rounds). */
-export const AUDIO_ANSWER_DURATION_MS = 45_000;
+/** Answer window after the facilitator starts the timer (Round 2). */
+export const AUDIO_ANSWER_DURATION_MS = 15_000;
 
 const VISUAL_ROUNDS = [
   {
@@ -117,7 +117,7 @@ const AUDIO_ROUNDS = [
     roundPrompt: "Song clip",
     movieQuestion: AUDIO_MOVIE_QUESTION,
     answer: "Sairat",
-    aliases: ["sairat", "dhadak", "zingaat", "zingat"],
+    aliases: ["sairat", "zingaat", "zingat","sairaat","zhingat"],
     audio: "/assets/Round-2/zingaat.mp3",
     hints: [],
   },
@@ -142,6 +142,8 @@ const AUDIO_ROUNDS = [
       "pyar kiya to darna kya",
       "pktdk",
       "p k t d k",
+      "pyaar kiya tho darna kya",
+      "pyaar kiya toh darna kya"
     ],
     audio: "/assets/Round-2/salman_guitar.mp3",
     hints: [],
@@ -152,13 +154,16 @@ const AUDIO_ROUNDS = [
     roundPrompt: "Dialogue clip",
     movieQuestion: AUDIO_MOVIE_QUESTION,
     answer: "Deewaar",
-    aliases: ["deewaar", "deewar", "dewaar", "the wall 1975", "wall amitabh"],
+    aliases: ["deewaar", "deewar", "dewaar", "the wall 1975", "wall amitabh","diwar"],
     audio: "/assets/Round-2/amitabh_deewaar.mp3",
     hints: [],
   },
 ];
 
-/** Round 3: five multiple-choice GK, then five text riddles (45s each, same scoring as pictures). */
+/** Round 3: GK and riddles alternate. GK = 7s MCQ; text riddles = 30s; one “keys” riddle is MCQ (30s). */
+export const FINAL_GK_MCQ_DURATION_MS = 7_000;
+export const FINAL_RIDDLE_DURATION_MS = 30_000;
+
 const FINAL_ROUNDS = [
   {
     kind: "mcq",
@@ -168,6 +173,15 @@ const FINAL_ROUNDS = [
     options: ["Seoul", "Beijing", "Tokyo", "Bangkok"],
     answer: "Tokyo",
     aliases: ["tokyo"],
+    hints: [],
+  },
+  {
+    kind: "riddle",
+    id: "riddle-sponge",
+    roundPrompt: "Riddle",
+    questionText: "What is full of holes but still holds water?",
+    answer: "Sponge",
+    aliases: ["a sponge", "the sponge", "sponge"],
     hints: [],
   },
   {
@@ -181,6 +195,15 @@ const FINAL_ROUNDS = [
     hints: [],
   },
   {
+    kind: "riddle",
+    id: "riddle-map",
+    roundPrompt: "Riddle",
+    questionText: "I have cities, but no houses. I have mountains, but no trees. I have water, but no fish. What am I?",
+    answer: "Map",
+    aliases: ["a map", "the map", "map"],
+    hints: [],
+  },
+  {
     kind: "mcq",
     id: "gk-ocean",
     roundPrompt: "General Knowledge",
@@ -191,6 +214,15 @@ const FINAL_ROUNDS = [
     hints: [],
   },
   {
+    kind: "riddle",
+    id: "riddle-keys",
+    roundPrompt: "Riddle",
+    questionText: "What has keys but can't open locks?",
+    answer: "Piano",
+    aliases: ["piano", "a piano", "the piano"],
+    hints: [],
+  },
+  {
     kind: "mcq",
     id: "gk-h2o",
     roundPrompt: "General Knowledge",
@@ -198,6 +230,15 @@ const FINAL_ROUNDS = [
     options: ["Go", "Gd", "Au", "Ag"],
     answer: "Au",
     aliases: ["au"],
+    hints: [],
+  },
+  {
+    kind: "riddle",
+    id: "riddle-candle",
+    roundPrompt: "Riddle",
+    questionText: "I'm tall when I'm young and I'm short when I'm old. What am I?",
+    answer: "Candle",
+    aliases: ["a candle", "the candle", "candle"],
     hints: [],
   },
   {
@@ -212,47 +253,11 @@ const FINAL_ROUNDS = [
   },
   {
     kind: "riddle",
-    id: "riddle-echo",
+    id: "riddle-clock",
     roundPrompt: "Riddle",
-    questionText: "I speak without a mouth and hear without ears. I have no body, but I come alive with wind. What am I?",
-    answer: "Echo",
-    aliases: ["an echo", "the echo", "echo"],
-    hints: [],
-  },
-  {
-    kind: "riddle",
-    id: "riddle-sponge",
-    roundPrompt: "Riddle",
-    questionText: "What is full of holes but still holds water?",
-    answer: "Sponge",
-    aliases: ["a sponge", "the sponge", "sponge"],
-    hints: [],
-  },
-  {
-    kind: "riddle",
-    id: "riddle-candle",
-    roundPrompt: "Riddle",
-    questionText: "I’m tall when I’m young and I’m short when I’m old. What am I?",
-    answer: "Candle",
-    aliases: ["a candle", "the candle", "candle"],
-    hints: [],
-  },
-  {
-    kind: "riddle",
-    id: "riddle-map",
-    roundPrompt: "Riddle",
-    questionText: "I have cities, but no houses. I have mountains, but no trees. I have water, but no fish. What am I?",
-    answer: "Map",
-    aliases: ["a map", "the map", "map"],
-    hints: [],
-  },
-  {
-    kind: "riddle",
-    id: "riddle-towel",
-    roundPrompt: "Riddle",
-    questionText: "What gets wetter as it dries?",
-    answer: "Towel",
-    aliases: ["a towel", "the towel", "towel"],
+    questionText: "What has hands but can't clap?",
+    answer: "Clock",
+    aliases: ["a clock", "the clock", "clock"],
     hints: [],
   },
 ];
@@ -289,7 +294,7 @@ export const META_ROUNDS = [
     number: 3,
     title: "Round 3 — Final",
     description:
-      "Ten quick questions: five general knowledge (teams tap A–D) and five riddles (type the answer). Same 45-second timer and scoring as earlier rounds.",
+      "Ten questions, alternating GK and riddle. GK: 7s, multiple choice. Riddles: 30s — teams type the answer.",
   },
 ];
 
@@ -336,6 +341,20 @@ export const MAX_HINTS = 3;
 export const WRONG_GUESS_PENALTY = 1;
 export const MAX_ROUND_SCORE = 100;
 export const SPEED_ROUND_BONUS = 25;
+
+/**
+ * @param {typeof ROUNDS[number] | null | undefined} round
+ * @returns {number}
+ */
+export function getRoundPlayDurationMs(round) {
+  if (!round) return ROUND_DURATION_MS;
+  if (typeof round.durationMs === "number" && round.durationMs > 0) return round.durationMs;
+  if (round.kind === "audio") return AUDIO_ANSWER_DURATION_MS;
+  if (round.kind === "visual") return ROUND_DURATION_MS;
+  if (round.kind === "mcq") return FINAL_GK_MCQ_DURATION_MS;
+  if (round.kind === "riddle") return FINAL_RIDDLE_DURATION_MS;
+  return ROUND_DURATION_MS;
+}
 
 export const ROUND_CLARITY_BLUR_MAX = 26;
 

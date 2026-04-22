@@ -231,12 +231,7 @@ export function AdminRoom() {
                 window when ready.
               </p>
             </>
-          ) : round.kind === "mcq" || round.kind === "riddle" ? (
-            <p className="lede" style={{ fontSize: "0.9rem", marginBottom: "1.25rem", maxWidth: "40ch" }}>
-              GK questions show four options on team devices; riddles use a text box. Nothing is shown to teams until
-              you start.
-            </p>
-          ) : (
+          ) : round.kind === "mcq" || round.kind === "riddle" ? null : (
             <p className="lede" style={{ fontSize: "0.9rem", marginBottom: "1.25rem", maxWidth: "40ch" }}>
               The image stays off your screen until you start — teams then see the same blurred picture and hints.
             </p>
@@ -270,9 +265,6 @@ export function AdminRoom() {
         {topBar}
         <div className="card" style={{ ...centeredCardStyle, marginTop: "1.5rem" }}>
           <h2 style={{ marginTop: 0, marginBottom: "0.25rem" }}>Leaderboard</h2>
-          <p className="lede" style={{ fontSize: "0.9rem", marginBottom: "1rem", maxWidth: "38ch" }}>
-            Standings (teams don&apos;t see this in their app).
-          </p>
           {leaderboardOl}
           <button type="button" className="btn btn-primary" style={{ marginTop: "1.5rem" }} onClick={onContinueAfterReveal}>
             {continueLabel}
@@ -339,8 +331,8 @@ export function AdminRoom() {
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Facilitator</h2>
             <p className="lede" style={{ fontSize: "0.95rem" }}>
-              Three blocks: five pictures, five audio clips, then a final round (five GK with A–D and five riddles). Teams
-              never see the leaderboard; only you play audio in Round 2.
+              Three blocks: five pictures, five audio clips, then a final round (GK with A–D and riddles). Only you play
+              audio in Round 2.
             </p>
             <p className="lede" style={{ fontSize: "0.9rem", marginBottom: 0 }}>
               If you refresh this page, your session is restored from this browser as long as the room still exists.
@@ -391,7 +383,7 @@ export function AdminRoom() {
                       </button>
                       {state.phase === "AUDIO_LISTEN" ? (
                         <button type="button" className="btn btn-primary" onClick={onStartAnswerTimer}>
-                          Start 45-second answer timer
+                          Start 15-second answer timer
                         </button>
                       ) : null}
                       {state.phase === "AUDIO_ANSWER" ? (
@@ -421,9 +413,6 @@ export function AdminRoom() {
                         ))}
                       </ul>
                     ) : null}
-                    <p className="lede" style={{ fontSize: "0.85rem", margin: 0 }}>
-                      Same 45s timer as picture rounds; teams submit an option letter or typed answer.
-                    </p>
                   </>
                 ) : (
                   <>

@@ -281,6 +281,12 @@ input:focus {
   font-weight: 600;
 }
 
+/* Round 3: discourage copy-paste of questions (teams still see text) */
+.round-question-nocopy {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .grid-2 {
   display: grid;
   gap: 1rem;

@@ -41,6 +41,10 @@ export function TeamPlay() {
   }, [state?.phase, state?.currentRound?.index]);
 
   useEffect(() => {
+    setGuess("");
+  }, [state?.currentRound?.index]);
+
+  useEffect(() => {
     const sock = getSocket();
     const raw = sessionStorage.getItem(teamSessionKey(code));
     if (!raw) {
@@ -137,6 +141,11 @@ export function TeamPlay() {
       : round?.timeLeftMs ?? 0;
 
   const pending = state.pendingRoundMeta;
+  const isRound3 =
+    round?.metaRoundNumber === 3 || rp?.metaRoundNumber === 3;
+  const round3CopyGuard = isRound3
+    ? { className: "round-question-nocopy" as const, onCopy: (e: { preventDefault: () => void }) => e.preventDefault() }
+    : {};
 
   return (
     <div className="shell">
@@ -229,83 +238,85 @@ export function TeamPlay() {
                 )}
               </div>
 
-              {round.roundPrompt ? <p className="round-prompt">{round.roundPrompt}</p> : null}
+              <div {...round3CopyGuard}>
+                {round.roundPrompt ? <p className="round-prompt">{round.roundPrompt}</p> : null}
 
-              {round.kind === "audio" ? (
-                <>
-                  {round.movieQuestion ? (
-                    <p className="lede" style={{ fontWeight: 600, color: "var(--text)", marginBottom: "0.75rem" }}>
-                      {round.movieQuestion}
-                    </p>
-                  ) : null}
-                  {state.phase === "AUDIO_LISTEN" ? (
-                    <p className="lede" style={{ marginBottom: "1rem" }}>
-                      Listen while the facilitator plays the clip from their screen. The answer box opens when they start
-                      the 45-second timer.
-                    </p>
-                  ) : null}
-                </>
-              ) : round.kind === "mcq" ? (
-                <>
-                  {round.questionText ? (
-                    <p className="lede" style={{ fontWeight: 600, color: "var(--text)", marginBottom: "1rem" }}>
-                      {round.questionText}
-                    </p>
-                  ) : null}
-                  {round.options?.length && state.phase === "ROUND_PLAY" ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
-                      {round.options.map((opt, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          className="btn btn-ghost"
-                          style={{ justifyContent: "flex-start", textAlign: "left" }}
-                          disabled={!canGuess}
-                          onClick={() => getSocket().emit("submitGuess", { guess: String.fromCharCode(65 + i) })}
-                        >
-                          <strong style={{ marginRight: "0.5rem" }}>{String.fromCharCode(65 + i)}.</strong>
-                          {opt}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </>
-              ) : round.kind === "riddle" ? (
-                <>
-                  {round.questionText ? (
-                    <p className="lede" style={{ fontWeight: 600, color: "var(--text)", marginBottom: "1rem" }}>
-                      {round.questionText}
-                    </p>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  {round.image ? (
-                    <div className="asset-frame">
-                      <img
-                        src={round.image}
-                        alt="Mystery asset"
-                        style={{
-                          filter: state.phase === "ROUND_REVEAL" ? "none" : `blur(${round.blurPx}px)`,
-                        }}
-                      />
-                    </div>
-                  ) : null}
+                {round.kind === "audio" ? (
+                  <>
+                    {round.movieQuestion ? (
+                      <p className="lede" style={{ fontWeight: 600, color: "var(--text)", marginBottom: "0.75rem" }}>
+                        {round.movieQuestion}
+                      </p>
+                    ) : null}
+                    {state.phase === "AUDIO_LISTEN" ? (
+                      <p className="lede" style={{ marginBottom: "1rem" }}>
+                        Listen while the facilitator plays the clip from their screen. The answer box opens when they start
+                        the 15-second timer.
+                      </p>
+                    ) : null}
+                  </>
+                ) : round.kind === "mcq" ? (
+                  <>
+                    {round.questionText ? (
+                      <p className="lede" style={{ fontWeight: 600, color: "var(--text)", marginBottom: "1rem" }}>
+                        {round.questionText}
+                      </p>
+                    ) : null}
+                    {round.options?.length && state.phase === "ROUND_PLAY" ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
+                        {round.options.map((opt, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            className="btn btn-ghost"
+                            style={{ justifyContent: "flex-start", textAlign: "left" }}
+                            disabled={!canGuess}
+                            onClick={() => getSocket().emit("submitGuess", { guess: String.fromCharCode(65 + i) })}
+                          >
+                            <strong style={{ marginRight: "0.5rem" }}>{String.fromCharCode(65 + i)}.</strong>
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                ) : round.kind === "riddle" ? (
+                  <>
+                    {round.questionText ? (
+                      <p className="lede" style={{ fontWeight: 600, color: "var(--text)", marginBottom: "1rem" }}>
+                        {round.questionText}
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    {round.image ? (
+                      <div className="asset-frame">
+                        <img
+                          src={round.image}
+                          alt="Mystery asset"
+                          style={{
+                            filter: state.phase === "ROUND_REVEAL" ? "none" : `blur(${round.blurPx}px)`,
+                          }}
+                        />
+                      </div>
+                    ) : null}
 
-                  {round.hints.length ? (
-                    <ul className="hint-list">
-                      {round.hints.map((h) => (
-                        <li key={h}>Hint: {h}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="lede" style={{ fontSize: "0.95rem" }}>
-                      Hints unlock at the start, then at 15s and 30s. The image stays fully blurred for the first 30s, then
-                      clears slightly in steps. You have 45 seconds — faster correct guesses score higher.
-                    </p>
-                  )}
-                </>
-              )}
+                    {round.hints.length ? (
+                      <ul className="hint-list">
+                        {round.hints.map((h) => (
+                          <li key={h}>Hint: {h}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="lede" style={{ fontSize: "0.95rem" }}>
+                        Hints unlock at the start, then at 15s and 30s. The image stays fully blurred for the first 30s, then
+                        clears slightly in steps. You have 45 seconds — faster correct guesses score higher.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
 
               {state.phase === "ROUND_REVEAL" && round.revealAnswer ? (
                 <>
